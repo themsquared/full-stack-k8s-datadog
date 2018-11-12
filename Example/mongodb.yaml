@@ -1,0 +1,117 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mongodb
+---
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRole
+metadata:
+  name: mongodb
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+  name: mongodb
+roleRef:
+  kind: ClusterRole
+  name: mongodb
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: mongodb
+  namespace: default
+---
+kind: StatefulSet
+apiVersion: apps/v1beta1
+metadata:
+  name: mongo
+  namespace: default
+  labels:
+    run: mongo
+  annotations:
+    deployment.kubernetes.io/revision: '1'
+spec:
+  serviceName: "mongo"
+  replicas: 3
+  selector:
+    matchLabels:
+      run: mongo
+  template:
+    metadata:
+      labels:
+        run: mongo
+        role: mongo
+        environment: fetch
+      annotations:
+        ad.datadoghq.com/mongo.check_names: '["mongo"]'
+        ad.datadoghq.com/mongo.init_configs: '[{}]'
+        ad.datadoghq.com/mongo.instances: '[{"server": "mongodb://datadog:tndPhL3wrMEDuj4wLEHmbxbV@%%host%%:%%port%%"}]'
+        ad.datadoghq.com/mongo.logs: '[{"source":"mongodb","service":"k8s-demo"}]'
+    spec:
+      serviceAccountName: mongodb
+      containers:
+      - name: mongo
+        image: mongo:latest
+        resources:
+          requests:
+            cpu: 100m
+          limits:
+            cpu: 250m
+        ports:
+        - containerPort: 27017
+          protocol: TCP
+        volumeMounts:
+          - name: mongo-persistent-storage
+            mountPath: /data/db
+        command:
+          - mongod
+          - "--replSet"
+          - "rs0"
+          - "--smallfiles"
+          - "--noprealloc"
+          - "--bind_ip_all"
+        imagePullPolicy: Always
+      - name: mongo-sidecar
+        image: cvallance/mongo-k8s-sidecar
+        env:
+          - name: MONGO_SIDECAR_POD_LABELS
+            value: "role=mongo,environment=fetch"
+          - name: MONGO_PORT
+            value: "27017"
+      restartPolicy: Always
+  volumeClaimTemplates:
+  - metadata:
+      name: mongo-persistent-storage
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 100Mi
+  
+
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: mongo
+  labels:
+    run: mongo
+spec:
+  ports:
+  - protocol: TCP
+    port: 27017
+    targetPort: 27017
+  selector:
+    run: mongo
+  type: ClusterIP
+  sessionAffinity: None
